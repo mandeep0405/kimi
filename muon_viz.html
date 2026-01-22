@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Muon vs Adam Explorer</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { background-color: #f8fafc; font-family: sans-serif; }
+        canvas { touch-action: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Icons as inline SVGs components to avoid dependencies
+        const Icons = {
+            Play: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>,
+            Pause: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>,
+            RotateCcw: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>,
+            Shield: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>,
+            ShieldAlert: () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>,
+            Users: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>,
+            Zap: () => <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        };
+
+        const MuonExplorer = () => {
+            const canvasRef = React.useRef(null);
+            const [mode, setMode] = React.useState('adam'); // 'adam', 'muon'
+            const [isRunning, setIsRunning] = React.useState(false);
+            const [useClip, setUseClip] = React.useState(true);
+            const [coverage, setCoverage] = React.useState(0);
+            const [epoch, setEpoch] = React.useState(0);
+            const [crashed, setCrashed] = React.useState(false);
+
+            // Simulation state
+            const explorersRef = React.useRef([]);
+            const gridRef = React.useRef([]);
+            const animationRef = React.useRef(null);
+            
+            const GRID_SIZE = 40; // Resolution of the hidden map
+            const EXPLORER_COUNT = 50;
+            
+            // Initialize grid and explorers
+            const resetSimulation = () => {
+                if (animationRef.current) cancelAnimationFrame(animationRef.current);
+                
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                
+                // Initialize "Hidden Knowledge" Grid (0 = hidden, 1 = revealed)
+                gridRef.current = new Array(GRID_SIZE * GRID_SIZE).fill(0);
+                
+                // Initialize Explorers at center
+                const newExplorers = [];
+                for (let i = 0; i < EXPLORER_COUNT; i++) {
+                newExplorers.push({
+                    x: canvas.width / 2,
+                    y: canvas.height / 2,
+                    vx: 0,
+                    vy: 0,
+                    id: i,
+                    color: `hsl(${Math.random() * 360}, 70%, 60%)`,
+                    active: true
+                });
+                }
+                explorersRef.current = newExplorers;
+                
+                setCoverage(0);
+                setEpoch(0);
+                setCrashed(false);
+                setIsRunning(false);
+                
+                // Initial draw
+                requestAnimationFrame(draw);
+            };
+
+            React.useEffect(() => {
+                resetSimulation();
+            }, [mode]); // Reset when mode changes
+
+            React.useEffect(() => {
+                const handleResize = () => {
+                if(canvasRef.current) {
+                    // Make canvas resolution match display size for sharpness
+                    const rect = canvasRef.current.getBoundingClientRect();
+                    canvasRef.current.width = rect.width;
+                    canvasRef.current.height = rect.height;
+                    resetSimulation();
+                }
+                };
+                window.addEventListener('resize', handleResize);
+                // Slight delay to ensure DOM is ready
+                setTimeout(handleResize, 100);
+                return () => window.removeEventListener('resize', handleResize);
+            }, []);
+
+            const update = () => {
+                if (crashed) return;
+
+                const canvas = canvasRef.current;
+                const width = canvas.width;
+                const height = canvas.height;
+                const explorers = explorersRef.current;
+                
+                if (mode === 'adam') {
+                // ADAM LOGIC: Correlated Updates
+                const globalDriftAngle = (Date.now() / 1000) + Math.sin(Date.now()/500); 
+                
+                explorers.forEach(exp => {
+                    if (!exp.active) return;
+                    
+                    // High correlation: everyone follows globalDrift + small individual noise
+                    const angle = globalDriftAngle + (Math.random() - 0.5) * 0.5;
+                    const speed = 2;
+                    
+                    exp.vx += Math.cos(angle) * 0.2;
+                    exp.vy += Math.sin(angle) * 0.2;
+                    
+                    // Drag (Adam uses momentum, but has decay)
+                    exp.vx *= 0.9;
+                    exp.vy *= 0.9;
+                });
+                
+                } else {
+                // MUON LOGIC: Orthogonal Updates
+                explorers.forEach((exp, index) => {
+                    if (!exp.active) return;
+
+                    // Force orthogonality: Distribute angles evenly across the circle
+                    const angle = (index / EXPLORER_COUNT) * Math.PI * 2 + (Date.now()/2000);
+                    
+                    let acceleration = 0.8; 
+                    
+                    // UNSTABLE LOGIC (If Clip is OFF)
+                    if (!useClip) {
+                    // Simulate "Attention Logits Exploding"
+                    acceleration *= (1 + (epoch / 300)); 
+                    
+                    if (Math.abs(exp.vx) > 15 || Math.abs(exp.vy) > 15) {
+                        exp.active = false; 
+                    }
+                    } else {
+                    // QK-CLIP LOGIC
+                    const maxVel = 5;
+                    const currentVel = Math.sqrt(exp.vx**2 + exp.vy**2);
+                    if (currentVel > maxVel) {
+                        // Scale down (Clip)
+                        exp.vx = (exp.vx / currentVel) * maxVel;
+                        exp.vy = (exp.vy / currentVel) * maxVel;
+                    }
+                    }
+
+                    exp.vx += Math.cos(angle) * acceleration;
+                    exp.vy += Math.sin(angle) * acceleration;
+                });
+                }
+
+                // Move & Explore
+                let activeCount = 0;
+                explorers.forEach(exp => {
+                if (!exp.active) return;
+                activeCount++;
+
+                exp.x += exp.vx;
+                exp.y += exp.vy;
+
+                // Bounce off walls
+                if (exp.x < 0 || exp.x > width) exp.vx *= -1;
+                if (exp.y < 0 || exp.y > height) exp.vy *= -1;
+
+                // Reveal Grid
+                const gridX = Math.floor((exp.x / width) * GRID_SIZE);
+                const gridY = Math.floor((exp.y / height) * GRID_SIZE);
+                
+                // Reveal radius
+                for(let dx = -1; dx <= 1; dx++) {
+                    for(let dy = -1; dy <= 1; dy++) {
+                    const gx = gridX + dx;
+                    const gy = gridY + dy;
+                    if (gx >= 0 && gx < GRID_SIZE && gy >= 0 && gy < GRID_SIZE) {
+                        const idx = gy * GRID_SIZE + gx;
+                        gridRef.current[idx] = 1;
+                    }
+                    }
+                }
+                });
+
+                if (activeCount === 0 && !crashed) {
+                setCrashed(true);
+                setIsRunning(false);
+                }
+
+                // Calculate stats
+                const revealedCount = gridRef.current.filter(x => x === 1).length;
+                setCoverage(Math.round((revealedCount / (GRID_SIZE * GRID_SIZE)) * 100));
+                setEpoch(prev => prev + 1);
+
+                draw();
+
+                if (activeCount > 0 && isRunning) {
+                animationRef.current = requestAnimationFrame(update);
+                }
+            };
+
+            const draw = () => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                const width = canvas.width;
+                const height = canvas.height;
+
+                // Clear background
+                ctx.fillStyle = '#111827'; // Dark gray/black
+                ctx.fillRect(0, 0, width, height);
+
+                // Draw Hidden Knowledge (The Map)
+                const cellW = width / GRID_SIZE;
+                const cellH = height / GRID_SIZE;
+
+                for (let i = 0; i < gridRef.current.length; i++) {
+                if (gridRef.current[i] === 1) {
+                    const x = (i % GRID_SIZE) * cellW;
+                    const y = Math.floor(i / GRID_SIZE) * cellH;
+                    
+                    const r = 50 + (x/width)*100;
+                    const g = 100 + (y/height)*100;
+                    const b = 150;
+                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.8)`;
+                    ctx.fillRect(x, y, cellW + 1, cellH + 1);
+                }
+                }
+
+                // Draw Explorers
+                explorersRef.current.forEach(exp => {
+                if (!exp.active) return;
+                
+                ctx.beginPath();
+                ctx.arc(exp.x, exp.y, 4, 0, Math.PI * 2);
+                ctx.fillStyle = mode === 'adam' ? '#fbbf24' : '#f472b6'; // Amber for Adam, Pink for Muon
+                ctx.fill();
+                
+                // Glow
+                ctx.shadowColor = ctx.fillStyle;
+                ctx.shadowBlur = 10;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                });
+                
+                if (crashed) {
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+                ctx.font = 'bold 30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText("CRASH: LOGITS EXPLODED", width/2, height/2);
+                }
+            };
+
+            const toggleSimulation = () => {
+                if (isRunning) {
+                setIsRunning(false);
+                cancelAnimationFrame(animationRef.current);
+                } else {
+                setIsRunning(true);
+                animationRef.current = requestAnimationFrame(update);
+                }
+            };
+
+            React.useEffect(() => {
+                if (isRunning) {
+                animationRef.current = requestAnimationFrame(update);
+                }
+                return () => cancelAnimationFrame(animationRef.current);
+            }, [isRunning]);
+
+            return (
+                <div className="w-full max-w-4xl mx-auto p-4 space-y-6 bg-slate-50 rounded-xl shadow-lg font-sans text-slate-800">
+                
+                <div className="text-center space-y-2">
+                    <h1 className="text-3xl font-bold text-slate-900">Muon vs AdamW: The Explorer Analogy</h1>
+                    <p className="text-slate-600 max-w-2xl mx-auto">
+                    Visualize how optimizers "explore" the loss landscape to find knowledge.
+                    </p>
+                </div>
+
+                <div className="flex flex-col md:flex-row gap-6">
+                    
+                    {/* Controls Panel */}
+                    <div className="flex-1 space-y-6 bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
+                    
+                    <div className="space-y-4">
+                        <h3 className="font-semibold text-lg flex items-center gap-2">
+                        <Icons.Users /> Select Explorer Strategy
+                        </h3>
+                        
+                        <div className="grid grid-cols-2 gap-3">
+                        <button
+                            onClick={() => { setMode('adam'); setIsRunning(false); }}
+                            className={`p-4 rounded-lg border-2 transition-all text-left space-y-2
+                            ${mode === 'adam' 
+                                ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-200' 
+                                : 'border-slate-200 hover:border-slate-300'}`}
+                        >
+                            <div className="font-bold text-amber-700">AdamW</div>
+                            <div className="text-xs text-slate-600">
+                            Explorers tend to follow each other. High correlation. Redundant coverage.
+                            </div>
+                        </button>
+
+                        <button
+                            onClick={() => { setMode('muon'); setIsRunning(false); }}
+                            className={`p-4 rounded-lg border-2 transition-all text-left space-y-2
+                            ${mode === 'muon' 
+                                ? 'border-pink-500 bg-pink-50 ring-2 ring-pink-200' 
+                                : 'border-slate-200 hover:border-slate-300'}`}
+                        >
+                            <div className="font-bold text-pink-700">Muon</div>
+                            <div className="text-xs text-slate-600">
+                            Explorers forced apart (Orthogonal). Maximum coverage per step.
+                            </div>
+                        </button>
+                        </div>
+                    </div>
+
+                    {mode === 'muon' && (
+                        <div className="space-y-3 pt-4 border-t border-slate-100">
+                        <h3 className="font-semibold text-lg flex items-center gap-2">
+                            <Icons.Shield /> Safety Mechanism (MuonClip)
+                        </h3>
+                        <div className="flex items-center justify-between bg-slate-100 p-3 rounded-md">
+                            <div className="text-sm">
+                            <div className="font-medium">Enable QK-Clip</div>
+                            <div className="text-slate-500 text-xs">Prevents crashing/explosion</div>
+                            </div>
+                            <button
+                            onClick={() => setUseClip(!useClip)}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${useClip ? 'bg-green-500' : 'bg-slate-300'}`}
+                            >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition transition-transform ${useClip ? 'translate-x-6' : 'translate-x-1'}`} />
+                            </button>
+                        </div>
+                        {!useClip && (
+                            <div className="text-xs text-red-600 flex items-center gap-1 bg-red-50 p-2 rounded">
+                            <Icons.ShieldAlert /> Warning: Without clipping, gradients may explode!
+                            </div>
+                        )}
+                        </div>
+                    )}
+
+                    <div className="pt-4 border-t border-slate-100 flex gap-3">
+                        <button
+                        onClick={toggleSimulation}
+                        className={`flex-1 py-3 rounded-lg font-bold text-white flex justify-center items-center gap-2 transition-colors
+                            ${isRunning ? 'bg-slate-600 hover:bg-slate-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+                        >
+                        {isRunning ? <><Icons.Pause /> Pause</> : <><Icons.Play /> Start Exploration</>}
+                        </button>
+                        <button
+                        onClick={resetSimulation}
+                        className="px-4 py-3 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-600"
+                        title="Reset"
+                        >
+                        <Icons.RotateCcw />
+                        </button>
+                    </div>
+
+                    </div>
+
+                    {/* Visualization Panel */}
+                    <div className="flex-1 space-y-2">
+                    <div className="flex justify-between items-center text-sm font-medium text-slate-600">
+                        <span>Knowledge Discovered (Coverage)</span>
+                        <span>Epoch: {epoch}</span>
+                    </div>
+                    
+                    <div className="h-4 w-full bg-slate-200 rounded-full overflow-hidden">
+                        <div 
+                        className={`h-full transition-all duration-300 ${mode === 'adam' ? 'bg-amber-500' : 'bg-pink-500'}`}
+                        style={{ width: `${coverage}%` }}
+                        />
+                    </div>
+                    
+                    <div className="relative aspect-square bg-slate-900 rounded-lg overflow-hidden shadow-inner border-4 border-slate-800">
+                        <canvas ref={canvasRef} className="w-full h-full" />
+                        
+                        {!isRunning && epoch === 0 && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none">
+                            <div className="bg-white/90 p-4 rounded-lg shadow-xl text-center">
+                            <div className="mx-auto mb-2 text-blue-500"><Icons.Zap /></div>
+                            <p className="font-bold text-slate-800">Ready to Explore</p>
+                            <p className="text-xs text-slate-600">Click Start to begin training</p>
+                            </div>
+                        </div>
+                        )}
+                    </div>
+                    <div className="text-xs text-slate-400 text-center">
+                        The black area is unlearned knowledge. Colored areas are learned.
+                    </div>
+                    </div>
+                </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById("root"));
+        root.render(<MuonExplorer />);
+    </script>
+</body>
+</html>
